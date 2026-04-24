@@ -1,0 +1,145 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: etcd-reliability-tool
+  namespace: kube-system
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcd-reliability-config
+  namespace: kube-system
+data:
+  config.yaml: |
+    etcd:
+      metrics_url: "http://127.0.0.1:2381/metrics"
+      cert_file: "/etc/etcd/server-client.crt"
+      key_file: "/etc/etcd/server-client.key"
+      ca_file: "/etc/etcd/server-ca.crt"
+    thresholds:
+      fsync_latency_seconds: 0.5
+      backend_commit_latency_seconds: 1.0
+      max_leader_changes_5m: 3
+      max_pending_proposals: 100
+    notifications:
+      slack:
+        enabled: true
+        channel: "#alerts-etcd"
+      pagerduty:
+        enabled: true
+    logging:
+      level: "info"
+      format: "json"
+    observability:
+      enabled: true # Toggle this to false to disable /metrics endpoint
+      metrics_port: 8080
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: etcd-reliability-secrets
+  namespace: kube-system
+type: Opaque
+stringData:
+  SLACK_TOKEN: "xoxb-REPLACE-ME"
+  PAGERDUTY_KEY: "REPLACE-ME"
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: etcd-reliability-tool
+  namespace: kube-system
+  labels:
+    app: etcd-reliability-tool
+spec:
+  selector:
+    app: etcd-reliability-tool
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+---
+# Optional: ServiceMonitor for Rancher Monitoring / SUSE Observability.
+# Delete this resource if you do not wish to integrate with Prometheus Operator.
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcd-reliability-tool
+  namespace: kube-system
+  labels:
+    app: etcd-reliability-tool
+    release: rancher-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: etcd-reliability-tool
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+---
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: etcd-reliability-tool
+  namespace: kube-system
+spec:
+  selector:
+    matchLabels:
+      app: etcd-reliability-tool
+  template:
+    metadata:
+      labels:
+        app: etcd-reliability-tool
+    spec:
+      hostNetwork: true
+      serviceAccountName: etcd-reliability-tool
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: agent
+        image: ttl.sh/etcd-reliability-tool-brian:5h
+        args: ["-config", "/etc/tool/config.yaml"]
+        ports:
+        - name: http
+          containerPort: 8080
+        env:
+        - name: SLACK_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: etcd-reliability-secrets
+              key: SLACK_TOKEN
+        - name: PAGERDUTY_KEY
+          valueFrom:
+            secretKeyRef:
+              name: etcd-reliability-secrets
+              key: PAGERDUTY_KEY
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: false
+          runAsUser: 0
+          allowPrivilegeEscalation: true
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/tool
+          readOnly: true
+        - name: etcd-certs
+          mountPath: /etc/etcd
+          readOnly: true
+      volumes:
+      - name: config
+        configMap:
+          name: etcd-reliability-config
+      - name: etcd-certs
+        hostPath:
+          path: /var/lib/rancher/rke2/server/tls/etcd/
+          type: Directory
