@@ -112,7 +112,7 @@ spec:
         effect: "NoSchedule"
       containers:
       - name: etcdoc
-        image: ttl.sh/etcdoc-testing-brian:1h
+        image: ttl.sh/etcdoc-testing-brian:2h
         imagePullPolicy: IfNotPresent
         args: ["-config", "/etc/tool/config.yaml"]
         ports:

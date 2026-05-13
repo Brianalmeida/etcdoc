@@ -237,7 +237,7 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 		return
 	}
 
-	alerts, err := e.Evaluate(body)
+	report, err := e.Evaluate(body)
 	if err != nil {
 		slog.Error("Evaluation failed", "error", err)
 		evalErrorsTotal.Inc()
@@ -246,14 +246,14 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 
 	lastSuccessTimestamp.SetToCurrentTime()
 
-	if len(alerts) > 0 {
-		slog.Info("Threshold violations detected", "count", len(alerts))
-		for _, a := range alerts {
+	if len(report.Alerts) > 0 {
+		slog.Info("Threshold violations detected", "count", len(report.Alerts))
+		for _, a := range report.Alerts {
 			alertsDispatchedTotal.WithLabelValues(a.Metric).Inc()
 		}
 
 		if atomic.LoadInt32(&isLeader) == 1 {
-			n.Notify(alerts)
+			n.Notify(report.Alerts)
 		} else {
 			slog.Debug("Skipping notification, not the leader")
 		}
@@ -263,24 +263,31 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 }
 
 func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator) {
-	fmt.Println("=== etcdoc Diagnostic Mode ===")
+	fmt.Println("\n=== etcdoc Diagnostic Report ===")
 	body, err := s.Scrape()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: Could not scrape etcd metrics: %v\n", err)
 		os.Exit(1)
 	}
 
-	alerts, err := e.Evaluate(body)
+	report, err := e.Evaluate(body)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: Evaluation error: %v\n", err)
 		os.Exit(1)
 	}
 
-	if len(alerts) > 0 {
+	for _, check := range report.Checks {
+		fmt.Printf("\n[%s] %s\n", check.Status, check.Name)
+		fmt.Printf("       Current: %s\n", check.Current)
+		fmt.Printf("     Threshold: %s\n", check.Threshold)
+		fmt.Printf("       Details: %s\n", check.Description)
+	}
+	
+	fmt.Println("\n================================")
+
+	if len(report.Alerts) > 0 {
 		fmt.Println("STATUS: UNHEALTHY")
-		for _, a := range alerts {
-			fmt.Printf("- [%s] %s\n", a.Metric, a.Message)
-		}
+		fmt.Println("One or more metrics exceeded acceptable thresholds.")
 		os.Exit(1)
 	}
 
