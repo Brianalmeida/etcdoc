@@ -1,23 +1,45 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log/slog"
 	"net/http"
 	"os"
+	"os/signal"
+	"sync/atomic"
+	"syscall"
 	"time"
 
-	"github.com/brian/etcd-reliability-tool/internal/config"
-	"github.com/brian/etcd-reliability-tool/internal/evaluator"
-	"github.com/brian/etcd-reliability-tool/internal/notifier"
-	"github.com/brian/etcd-reliability-tool/internal/scraper"
+	"github.com/brian/etcdoc/internal/config"
+	"github.com/brian/etcdoc/internal/evaluator"
+	"github.com/brian/etcdoc/internal/notifier"
+	"github.com/brian/etcdoc/internal/scraper"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/rest"
+	"k8s.io/client-go/tools/clientcmd"
+	"k8s.io/client-go/tools/leaderelection"
+	"k8s.io/client-go/tools/leaderelection/resourcelock"
 )
 
+var (
+	isLeader int32 // atomic boolean for leadership status
+)
+
+func buildConfig() (*rest.Config, error) {
+	kubeconfig := os.Getenv("KUBECONFIG")
+	if kubeconfig != "" {
+		return clientcmd.BuildConfigFromFlags("", kubeconfig)
+	}
+	return rest.InClusterConfig()
+}
 var (
 	scrapeErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "etcd_reliability_scrape_errors_total",
@@ -65,6 +87,7 @@ func initLogger(cfg *config.Config) {
 func main() {
 	configPath := flag.String("config", "config.yaml", "Path to config file")
 	interval := flag.Duration("interval", 30*time.Second, "Scrape interval")
+	once := flag.Bool("once", false, "Run exactly one health check and exit (diagnostic mode)")
 	flag.Parse()
 
 	cfg, err := config.Load(*configPath)
@@ -74,7 +97,7 @@ func main() {
 	}
 
 	initLogger(cfg)
-	slog.Info("Starting etcd-reliability-tool", "interval", *interval, "config", *configPath)
+	slog.Info("Starting etcdoc", "interval", *interval, "config", *configPath, "once", *once)
 
 	s, err := scraper.New(cfg)
 	if err != nil {
@@ -84,6 +107,77 @@ func main() {
 
 	e := evaluator.New(cfg)
 	n := notifier.New(cfg)
+
+	if *once {
+		runDiagnosticMode(s, e)
+		return
+	}
+
+	// Set up context and interrupts
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	go func() {
+		<-sigCh
+		slog.Info("Received termination signal, shutting down")
+		cancel()
+	}()
+
+	// Set up leader election
+	podName := os.Getenv("POD_NAME")
+	if podName == "" {
+		podName = "etcdoc-standalone"
+	}
+
+	kubeCfg, err := buildConfig()
+	if err != nil {
+		slog.Warn("Could not build kube config, running without leader election (always leader)", "error", err)
+		atomic.StoreInt32(&isLeader, 1)
+	} else {
+		clientset, err := kubernetes.NewForConfig(kubeCfg)
+		if err != nil {
+			slog.Error("Failed to create kubernetes client", "error", err)
+			os.Exit(1)
+		}
+
+		lock := &resourcelock.LeaseLock{
+			LeaseMeta: metav1.ObjectMeta{
+				Name:      "etcdoc-leader",
+				Namespace: "kube-system",
+			},
+			Client: clientset.CoordinationV1(),
+			LockConfig: resourcelock.ResourceLockConfig{
+				Identity: podName,
+			},
+		}
+
+		go leaderelection.RunOrDie(ctx, leaderelection.LeaderElectionConfig{
+			Lock:            lock,
+			ReleaseOnCancel: true,
+			LeaseDuration:   15 * time.Second,
+			RenewDeadline:   10 * time.Second,
+			RetryPeriod:     2 * time.Second,
+			Callbacks: leaderelection.LeaderCallbacks{
+				OnStartedLeading: func(ctx context.Context) {
+					slog.Info("Started leading")
+					atomic.StoreInt32(&isLeader, 1)
+				},
+				OnStoppedLeading: func() {
+					slog.Info("Stopped leading")
+					atomic.StoreInt32(&isLeader, 0)
+				},
+				OnNewLeader: func(identity string) {
+					if identity == podName {
+						slog.Info("I am the new leader", "identity", identity)
+					} else {
+						slog.Info("New leader elected", "identity", identity)
+					}
+				},
+			},
+		})
+	}
 
 	// Start the HTTP server for /health and optionally /metrics
 	go func() {
@@ -124,8 +218,14 @@ func main() {
 	// Initial run
 	run(s, e, n)
 
-	for range ticker.C {
-		run(s, e, n)
+	for {
+		select {
+		case <-ctx.Done():
+			slog.Info("Shutting down main loop")
+			return
+		case <-ticker.C:
+			run(s, e, n)
+		}
 	}
 }
 
@@ -151,8 +251,40 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 		for _, a := range alerts {
 			alertsDispatchedTotal.WithLabelValues(a.Metric).Inc()
 		}
-		n.Notify(alerts)
+
+		if atomic.LoadInt32(&isLeader) == 1 {
+			n.Notify(alerts)
+		} else {
+			slog.Debug("Skipping notification, not the leader")
+		}
 	} else {
 		slog.Debug("etcd member healthy")
 	}
+}
+
+func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator) {
+	fmt.Println("=== etcdoc Diagnostic Mode ===")
+	body, err := s.Scrape()
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: Could not scrape etcd metrics: %v\n", err)
+		os.Exit(1)
+	}
+
+	alerts, err := e.Evaluate(body)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "FAIL: Evaluation error: %v\n", err)
+		os.Exit(1)
+	}
+
+	if len(alerts) > 0 {
+		fmt.Println("STATUS: UNHEALTHY")
+		for _, a := range alerts {
+			fmt.Printf("- [%s] %s\n", a.Metric, a.Message)
+		}
+		os.Exit(1)
+	}
+
+	fmt.Println("STATUS: HEALTHY")
+	fmt.Println("All monitored metrics are within acceptable thresholds.")
+	os.Exit(0)
 }

@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/brian/etcd-reliability-tool/internal/config"
+	"github.com/brian/etcdoc/internal/config"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
@@ -104,7 +104,21 @@ func (e *Evaluator) Evaluate(metricsBody string) ([]Alert, error) {
 		}
 	}
 
-	// 4. Leader Changes
+	// 4. DB Size Check
+	if mf, ok := metricFamilies["etcd_mvcc_db_total_size_in_bytes"]; ok {
+		for _, m := range mf.GetMetric() {
+			val := m.GetGauge().GetValue()
+			slog.Debug("Checking etcd_mvcc_db_total_size_in_bytes", "value", val, "threshold", e.cfg.Thresholds.MaxDBSizeBytes)
+			if val > e.cfg.Thresholds.MaxDBSizeBytes {
+				alerts = append(alerts, Alert{
+					Metric:  "etcd_mvcc_db_total_size_in_bytes",
+					Message: fmt.Sprintf("High DB size: %.0f bytes (threshold: %.0f bytes)", val, e.cfg.Thresholds.MaxDBSizeBytes),
+				})
+			}
+		}
+	}
+
+	// 5. Leader Changes
 	if mf, ok := metricFamilies["etcd_server_leader_changes_seen_total"]; ok {
 		for _, m := range mf.GetMetric() {
 			current := m.GetCounter().GetValue()

@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  etcdoc:
+    build: .
+    image: etcdoc:local
+    container_name: etcdoc
+    network_mode: host
+    restart: unless-stopped
+    environment:
+      - KUBECONFIG=/root/.kube/config
+      - POD_NAME=etcdoc-standalone
+      # Optional Threshold Overrides
+      # - FSYNC_LATENCY_SECONDS=0.5
+      # - BACKEND_COMMIT_LATENCY_SECONDS=1.0
+      # - MAX_LEADER_CHANGES_5M=3
+      # - MAX_PENDING_PROPOSALS=100
+      # - MAX_DB_SIZE_BYTES=8589934592
+    volumes:
+      # Mount etcd certificates for scraping
+      - /var/lib/rancher/rke2/server/tls/etcd:/var/lib/rancher/rke2/server/tls/etcd:ro
+      # (Optional) Mount KUBECONFIG if you want to use it for leader election in standalone mode
+      - /etc/rancher/rke2/rke2.yaml:/root/.kube/config:ro
+    # For one-shot diagnostic mode, uncomment the following line:
+    # command: ["--once"]

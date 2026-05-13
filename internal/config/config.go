@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"os"
+	"strconv"
 
 	"gopkg.in/yaml.v3"
 )
@@ -16,27 +17,12 @@ type Config struct {
 	} `yaml:"etcd"`
 
 	Thresholds struct {
-		FsyncLatencySeconds        float64 `yaml:"fsync_latency_seconds"`
+		FsyncLatencySeconds         float64 `yaml:"fsync_latency_seconds"`
 		BackendCommitLatencySeconds float64 `yaml:"backend_commit_latency_seconds"`
-		MaxLeaderChanges5m         int     `yaml:"max_leader_changes_5m"`
-		MaxPendingProposals        int     `yaml:"max_pending_proposals"`
+		MaxLeaderChanges5m          int     `yaml:"max_leader_changes_5m"`
+		MaxPendingProposals         int     `yaml:"max_pending_proposals"`
+		MaxDBSizeBytes              float64 `yaml:"max_db_size_bytes"`
 	} `yaml:"thresholds"`
-
-	Notifications struct {
-		Slack struct {
-			Enabled bool   `yaml:"enabled"`
-			Token   string `yaml:"-"` // Loaded from env
-			Channel string `yaml:"channel"`
-		} `yaml:"slack"`
-		PagerDuty struct {
-			Enabled    bool   `yaml:"enabled"`
-			RoutingKey string `yaml:"-"` // Loaded from env
-		} `yaml:"pagerduty"`
-		Webhook struct {
-			Enabled bool   `yaml:"enabled"`
-			URL     string `yaml:"url"`
-		} `yaml:"webhook"`
-	} `yaml:"notifications"`
 
 	Logging struct {
 		Level  string `yaml:"level"`  // debug, info, warn, error
@@ -62,7 +48,7 @@ func Load(path string) (*Config, error) {
 	cfg.Thresholds.BackendCommitLatencySeconds = 1.0
 	cfg.Thresholds.MaxLeaderChanges5m = 3
 	cfg.Thresholds.MaxPendingProposals = 100
-
+	cfg.Thresholds.MaxDBSizeBytes = 8589934592 // 8GB default
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
 	
@@ -82,13 +68,31 @@ func Load(path string) (*Config, error) {
 		}
 	}
 
-	// Override with environment variables for secrets
-	if token := os.Getenv("SLACK_TOKEN"); token != "" {
-		cfg.Notifications.Slack.Token = token
+	// Override thresholds with environment variables
+	if v := os.Getenv("FSYNC_LATENCY_SECONDS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Thresholds.FsyncLatencySeconds = f
+		}
 	}
-	if key := os.Getenv("PAGERDUTY_KEY"); key != "" {
-		cfg.Notifications.PagerDuty.RoutingKey = key
+	if v := os.Getenv("BACKEND_COMMIT_LATENCY_SECONDS"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Thresholds.BackendCommitLatencySeconds = f
+		}
 	}
-
+	if v := os.Getenv("MAX_LEADER_CHANGES_5M"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Thresholds.MaxLeaderChanges5m = i
+		}
+	}
+	if v := os.Getenv("MAX_PENDING_PROPOSALS"); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			cfg.Thresholds.MaxPendingProposals = i
+		}
+	}
+	if v := os.Getenv("MAX_DB_SIZE_BYTES"); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			cfg.Thresholds.MaxDBSizeBytes = f
+		}
+	}
 	return cfg, nil
 }
