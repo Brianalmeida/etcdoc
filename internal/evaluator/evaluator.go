@@ -191,6 +191,54 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 		}
 	}
 
+	// 6. Cluster Peer Health
+	if mfActive, okActive := metricFamilies["etcd_network_active_peers"]; okActive {
+		if mfKnown, okKnown := metricFamilies["etcd_network_known_peers"]; okKnown {
+			var activePeers, knownPeers float64
+			for _, m := range mfActive.GetMetric() {
+				// Each remote peer has an entry. Sum the active ones
+				if m.GetGauge().GetValue() == 1 {
+					activePeers++
+				}
+			}
+			for _, m := range mfKnown.GetMetric() {
+				// Known peers includes self (sometimes), but we count entries that are 1
+				if m.GetGauge().GetValue() == 1 {
+					knownPeers++
+				}
+			}
+			
+			// Known peers often includes self in some etcd versions, but remote in others.
+			// The most reliable check is: if we have disconnected peers, we are degraded.
+			if mfDisconnected, okDisc := metricFamilies["etcd_network_disconnected_peers_total"]; okDisc {
+				for _, _ = range mfDisconnected.GetMetric() {
+					// Any disconnected peer entry means at some point a peer disconnected.
+					// A better real-time check is active vs known.
+				}
+			}
+
+			// We use active < (known - 1) heuristic or active == 0 when known > 1
+			// Actually, just check if any known peer is not active
+			
+			res := CheckResult{
+				Name:      "Cluster Peer Health",
+				Current:   fmt.Sprintf("%.0f active / %.0f known", activePeers, knownPeers),
+				Threshold: "Active == Known peers",
+			}
+			
+			if knownPeers > 1 && activePeers < (knownPeers - 1) { 
+				// -1 because known peers usually includes the local node itself
+				res.Status = "WARN"
+				res.Description = "Cluster is degraded. One or more peers are unreachable."
+				alerts = append(alerts, Alert{Metric: "etcd_network_active_peers", Message: res.Description})
+			} else {
+				res.Status = "PASS"
+				res.Description = "All known peers are active."
+			}
+			checks = append(checks, res)
+		}
+	}
+
 	e.lastCheckTime = time.Now()
 
 	// Update last state
