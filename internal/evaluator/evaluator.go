@@ -239,6 +239,36 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 		}
 	}
 
+	// 7. Cluster Size Validation
+	if mfKnown, okKnown := metricFamilies["etcd_network_known_peers"]; okKnown {
+		var knownPeers float64
+		for _, m := range mfKnown.GetMetric() {
+			if m.GetGauge().GetValue() == 1 {
+				knownPeers++
+			}
+		}
+
+		res := CheckResult{
+			Name:      "Cluster Size",
+			Current:   fmt.Sprintf("%.0f nodes", knownPeers),
+			Threshold: "Odd number (1, 3, or 5)",
+		}
+
+		if int(knownPeers)%2 == 0 {
+			res.Status = "WARN"
+			res.Description = "Etcd requires an odd number of members for optimal fault tolerance."
+			alerts = append(alerts, Alert{Metric: "etcd_network_known_peers", Message: res.Description})
+		} else if knownPeers > 5 {
+			res.Status = "WARN"
+			res.Description = "Clusters larger than 5 nodes are generally not recommended due to performance degradation."
+			alerts = append(alerts, Alert{Metric: "etcd_network_known_peers", Message: res.Description})
+		} else {
+			res.Status = "PASS"
+			res.Description = "Cluster size is optimal."
+		}
+		checks = append(checks, res)
+	}
+
 	e.lastCheckTime = time.Now()
 
 	// Update last state
