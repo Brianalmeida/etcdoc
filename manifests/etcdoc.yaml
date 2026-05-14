@@ -1,13 +1,37 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: etcd-reliability-tool
+  name: etcdoc
+  namespace: kube-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: etcdoc-leader-election
+  namespace: kube-system
+rules:
+- apiGroups: ["coordination.k8s.io"]
+  resources: ["leases"]
+  verbs: ["get", "watch", "list", "create", "update", "patch", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: etcdoc-leader-election
+  namespace: kube-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: etcdoc-leader-election
+subjects:
+- kind: ServiceAccount
+  name: etcdoc
   namespace: kube-system
 ---
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: etcd-reliability-config
+  name: etcdoc-config
   namespace: kube-system
 data:
   config.yaml: |
@@ -21,58 +45,41 @@ data:
       backend_commit_latency_seconds: 1.0
       max_leader_changes_5m: 3
       max_pending_proposals: 100
-    notifications:
-      slack:
-        enabled: true
-        channel: "#alerts-etcd"
-      pagerduty:
-        enabled: true
+      max_db_size_bytes: 8589934592
     logging:
       level: "info"
       format: "json"
     observability:
-      enabled: true # Toggle this to false to disable /metrics endpoint
+      enabled: true
       metrics_port: 8080
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: etcd-reliability-secrets
-  namespace: kube-system
-type: Opaque
-stringData:
-  SLACK_TOKEN: "xoxb-REPLACE-ME"
-  PAGERDUTY_KEY: "REPLACE-ME"
 ---
 apiVersion: v1
 kind: Service
 metadata:
-  name: etcd-reliability-tool
+  name: etcdoc
   namespace: kube-system
   labels:
-    app: etcd-reliability-tool
+    app: etcdoc
 spec:
   selector:
-    app: etcd-reliability-tool
+    app: etcdoc
   ports:
   - name: http
     port: 8080
     targetPort: 8080
 ---
-# Optional: ServiceMonitor for Rancher Monitoring / SUSE Observability.
-# Delete this resource if you do not wish to integrate with Prometheus Operator.
 apiVersion: monitoring.coreos.com/v1
 kind: ServiceMonitor
 metadata:
-  name: etcd-reliability-tool
+  name: etcdoc
   namespace: kube-system
   labels:
-    app: etcd-reliability-tool
+    app: etcdoc
     release: rancher-monitoring
 spec:
   selector:
     matchLabels:
-      app: etcd-reliability-tool
+      app: etcdoc
   endpoints:
   - port: http
     path: /metrics
@@ -81,19 +88,19 @@ spec:
 apiVersion: apps/v1
 kind: DaemonSet
 metadata:
-  name: etcd-reliability-tool
+  name: etcdoc
   namespace: kube-system
 spec:
   selector:
     matchLabels:
-      app: etcd-reliability-tool
+      app: etcdoc
   template:
     metadata:
       labels:
-        app: etcd-reliability-tool
+        app: etcdoc
     spec:
       hostNetwork: true
-      serviceAccountName: etcd-reliability-tool
+      serviceAccountName: etcdoc
       nodeSelector:
         node-role.kubernetes.io/control-plane: "true"
       tolerations:
@@ -104,23 +111,18 @@ spec:
         operator: "Exists"
         effect: "NoSchedule"
       containers:
-      - name: agent
-        image: ttl.sh/etcd-reliability-tool-brian:5h
+      - name: etcdoc
+        image: ttl.sh/etcdoc-testing-brian:4h
+        imagePullPolicy: IfNotPresent
         args: ["-config", "/etc/tool/config.yaml"]
         ports:
         - name: http
           containerPort: 8080
         env:
-        - name: SLACK_TOKEN
+        - name: POD_NAME
           valueFrom:
-            secretKeyRef:
-              name: etcd-reliability-secrets
-              key: SLACK_TOKEN
-        - name: PAGERDUTY_KEY
-          valueFrom:
-            secretKeyRef:
-              name: etcd-reliability-secrets
-              key: PAGERDUTY_KEY
+            fieldRef:
+              fieldPath: metadata.name
         securityContext:
           readOnlyRootFilesystem: true
           runAsNonRoot: false
@@ -138,7 +140,7 @@ spec:
       volumes:
       - name: config
         configMap:
-          name: etcd-reliability-config
+          name: etcdoc-config
       - name: etcd-certs
         hostPath:
           path: /var/lib/rancher/rke2/server/tls/etcd/

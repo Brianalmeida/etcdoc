@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/brian/etcd-reliability-tool/internal/config"
+	"github.com/brian/etcdoc/internal/config"
 )
 
 type Scraper struct {
