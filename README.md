@@ -1,4 +1,4 @@
-# etcdoc
+# etcdoc -> Etcd Doctor
 
 > **⚠️ Status: Experimental / Work In Progress (WIP)**
 >
