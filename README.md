@@ -34,27 +34,15 @@ This manifest deploys:
 *   A `DaemonSet` targeting nodes with the `node-role.kubernetes.io/control-plane` label.
 *   A `Service` and `ServiceMonitor` (for Prometheus Operator integration).
 
-### Deployment Method 2: Local Container Run
+### Deployment Method 2: One-Shot Diagnostic Mode
 
-If you need to bypass `kubectl` or run the tool on nodes directly, you can use `docker-compose` or `nerdctl`.
-
-1. Review the included `docker-compose.yml` to ensure host paths (like `/var/lib/rancher/rke2/server/tls/etcd/`) map correctly.
-2. Run the container:
-```bash
-docker-compose up -d
-# or using nerdctl
-nerdctl compose up -d
-```
-
-### Deployment Method 3: One-Shot Diagnostic Mode
-
-For support engineers needing immediate answers on cluster health, `etcdoc` includes a one-shot diagnostic mode. This runs a single evaluation cycle and exits with a semantic status code (0 for healthy, 1 for unhealthy).
+For support engineers needing immediate answers on cluster health, `etcdoc` includes a one-shot diagnostic mode. This runs a single evaluation cycle and exits with a semantic status code (0 for healthy, 1 for unhealthy). You can run this directly on an RKE2 node using the packaged `ctr` binary, eliminating the need to install Docker.
 
 ```bash
-# Via docker/nerdctl
-docker run --rm --network host \
-  -v /var/lib/rancher/rke2/server/tls/etcd:/var/lib/rancher/rke2/server/tls/etcd:ro \
-  etcdoc:local --once
+# Via containerd (ctr) on an RKE2 node
+sudo /var/lib/rancher/rke2/bin/ctr --address /run/k3s/containerd/containerd.sock --namespace k8s.io run --rm --net-host --user 0:0 \
+  --mount type=bind,src=/var/lib/rancher/rke2/server/tls/etcd,dst=/var/lib/rancher/rke2/server/tls/etcd,options=rbind:ro \
+  docker.io/library/etcdoc:local etcdoc-diag /etcdoc --once
 ```
 
 ## Configuration & Metrics
@@ -92,4 +80,4 @@ docker build -t your-registry/etcdoc:latest .
 # Push the image
 docker push your-registry/etcdoc:latest
 ```
-*Note: Ensure you update the image reference in the `DaemonSet` manifest and `docker-compose.yml` after pushing your custom image.*
+*Note: Ensure you update the image reference in the `DaemonSet` manifest after pushing your custom image.*
