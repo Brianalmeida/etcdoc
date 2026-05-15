@@ -39,8 +39,8 @@ func Load(path string) (*Config, error) {
 	cfg := &Config{}
 
 	// Set defaults
-	cfg.Etcd.MetricsURL = "https://127.0.0.1:2381/metrics"
-	cfg.Etcd.CertFile = "/var/lib/rancher/rke2/server/tls/etcd/server-etcd.crt"
+	cfg.Etcd.MetricsURL = "http://127.0.0.1:2381/metrics"
+	cfg.Etcd.CertFile = "/var/lib/rancher/rke2/server/tls/etcd/server-client.crt"
 	cfg.Etcd.KeyFile = "/var/lib/rancher/rke2/server/tls/etcd/server-client.key"
 	cfg.Etcd.CAFile = "/var/lib/rancher/rke2/server/tls/etcd/server-ca.crt"
 	
