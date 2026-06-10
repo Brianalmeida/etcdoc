@@ -1,0 +1,18 @@
+{{- if .Values.serviceMonitor.enabled -}}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: etcdoc
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app: etcdoc
+    release: rancher-monitoring
+spec:
+  selector:
+    matchLabels:
+      app: etcdoc
+  endpoints:
+  - port: http
+    path: /metrics
+    interval: 30s
+{{- end }}

@@ -17,9 +17,12 @@ services:
       # - MAX_PENDING_PROPOSALS=100
       # - MAX_DB_SIZE_BYTES=8589934592
     volumes:
+      # Mount application config
+      - ./config.yaml:/etc/tool/config.yaml:ro
       # Mount etcd certificates for scraping
       - /var/lib/rancher/rke2/server/tls/etcd:/var/lib/rancher/rke2/server/tls/etcd:ro
       # (Optional) Mount KUBECONFIG if you want to use it for leader election in standalone mode
       - /etc/rancher/rke2/rke2.yaml:/root/.kube/config:ro
-    # For one-shot diagnostic mode, uncomment the following line:
-    # command: ["--once"]
+    command: ["-config", "/etc/tool/config.yaml"]
+    # For one-shot diagnostic mode, change the command to:
+    # command: ["-config", "/etc/tool/config.yaml", "-once"]

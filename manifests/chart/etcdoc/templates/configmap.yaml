@@ -1,0 +1,25 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: etcdoc-config
+  namespace: {{ .Release.Namespace }}
+data:
+  config.yaml: |
+    etcd:
+      metrics_url: {{ .Values.config.etcd.metrics_url | quote }}
+      cert_file: {{ .Values.config.etcd.cert_file | quote }}
+      key_file: {{ .Values.config.etcd.key_file | quote }}
+      ca_file: {{ .Values.config.etcd.ca_file | quote }}
+    thresholds:
+      fsync_latency_seconds: {{ .Values.config.thresholds.fsync_latency_seconds }}
+      backend_commit_latency_seconds: {{ .Values.config.thresholds.backend_commit_latency_seconds }}
+      max_leader_changes_5m: {{ .Values.config.thresholds.max_leader_changes_5m }}
+      max_pending_proposals: {{ .Values.config.thresholds.max_pending_proposals }}
+      max_db_size_bytes: {{ .Values.config.thresholds.max_db_size_bytes }}
+    logging:
+      level: {{ .Values.config.logging.level | quote }}
+      format: {{ .Values.config.logging.format | quote }}
+      diagnostic_interval: {{ .Values.config.logging.diagnostic_interval | quote }}
+    observability:
+      enabled: {{ .Values.config.observability.enabled }}
+      metrics_port: {{ .Values.config.observability.metrics_port }}

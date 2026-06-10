@@ -69,9 +69,12 @@ The tool is configured via `config.yaml` or Environment Variables. Key threshold
 *   `MAX_DB_SIZE_BYTES`: Max allowed database size in bytes (default 8GB).
 
 ### Internal Metrics & Observability
-The tool exposes its own health and operational metrics on port `8080`:
+The tool exposes its own health and operational metrics on port `8081`:
 *   **`/health`**: Returns the last evaluated state in JSON format.
 *   **`/metrics`**: Exposes Prometheus metrics regarding the tool's internal operations and dispatched alerts. Critical alerting now relies on external Alertmanager setups scraping these metrics.
+
+### Deprecated Integrations (V2)
+As of V2, the direct PagerDuty integration has been entirely removed from `etcdoc` to simplify its scope. Alert routing is now handled exclusively by outputting standard logs (which can be scraped by Promtail/FluentBit) and exposing Prometheus metrics (which can be consumed by Prometheus and Alertmanager to route to PagerDuty or other receivers).
 
 ## Development
 

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -59,7 +60,7 @@ var (
 	})
 )
 
-func initLogger(cfg *config.Config) {
+func initLogger(cfg *config.Config, logFile *os.File) {
 	var level slog.Level
 	switch cfg.Logging.Level {
 	case "debug":
@@ -74,11 +75,16 @@ func initLogger(cfg *config.Config) {
 		level = slog.LevelInfo
 	}
 
+	var out io.Writer = os.Stdout
+	if logFile != nil {
+		out = io.MultiWriter(os.Stdout, logFile)
+	}
+
 	var handler slog.Handler
 	if cfg.Logging.Format == "text" {
-		handler = slog.NewTextHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		handler = slog.NewTextHandler(out, &slog.HandlerOptions{Level: level})
 	} else {
-		handler = slog.NewJSONHandler(os.Stdout, &slog.HandlerOptions{Level: level})
+		handler = slog.NewJSONHandler(out, &slog.HandlerOptions{Level: level})
 	}
 
 	slog.SetDefault(slog.New(handler))
@@ -96,7 +102,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	initLogger(cfg)
+	logPath := "/var/lib/rancher/rke2/server/tls/etcd/etcdoc-diag.log"
+	logFile, err := os.OpenFile(logPath, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0644)
+	if err != nil {
+		fmt.Fprintf(os.Stderr, "Failed to open diagnostic log file, writing to stdout only: %v\n", err)
+	} else {
+		defer logFile.Close()
+	}
+
+	initLogger(cfg, logFile)
 	slog.Info("Starting etcdoc", "interval", *interval, "config", *configPath, "once", *once)
 
 	s, err := scraper.New(cfg)
@@ -109,7 +123,7 @@ func main() {
 	n := notifier.New(cfg)
 
 	if *once {
-		runDiagnosticMode(s, e)
+		runDiagnosticMode(s, e, logFile)
 		return
 	}
 
@@ -215,6 +229,31 @@ func main() {
 	ticker := time.NewTicker(*interval)
 	defer ticker.Stop()
 
+	diagInterval, err := time.ParseDuration(cfg.Logging.DiagnosticInterval)
+	if err != nil {
+		slog.Warn("Invalid diagnostic_interval, defaulting to 6h", "error", err)
+		diagInterval = 6 * time.Hour
+	}
+	diagTicker := time.NewTicker(diagInterval)
+	defer diagTicker.Stop()
+
+	// Startup Diagnostic Report
+	body, err := s.Scrape()
+	if err == nil {
+		report, err := e.Evaluate(body)
+		if err == nil {
+			slog.Info("Startup Diagnostic Report", "checks", report.Checks)
+			if logFile != nil {
+				writeDiagnosticReport(logFile, report)
+				logFile.Sync()
+			}
+		} else {
+			slog.Error("Failed to evaluate metrics for startup report", "error", err)
+		}
+	} else {
+		slog.Error("Failed to scrape metrics for startup report", "error", err)
+	}
+
 	// Initial run
 	run(s, e, n)
 
@@ -225,6 +264,18 @@ func main() {
 			return
 		case <-ticker.C:
 			run(s, e, n)
+		case <-diagTicker.C:
+			body, err := s.Scrape()
+			if err == nil {
+				report, err := e.Evaluate(body)
+				if err == nil {
+					slog.Info("Periodic Diagnostic Report generated")
+					if logFile != nil {
+						writeDiagnosticReport(logFile, report)
+						logFile.Sync()
+					}
+				}
+			}
 		}
 	}
 }
@@ -262,7 +313,27 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 	}
 }
 
-func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator) {
+func writeDiagnosticReport(w io.Writer, report evaluator.Report) {
+	fmt.Fprintf(w, "\n=== etcdoc Diagnostic Report ===\n")
+	for _, check := range report.Checks {
+		fmt.Fprintf(w, "\n[%s] %s\n", check.Status, check.Name)
+		fmt.Fprintf(w, "       Current: %s\n", check.Current)
+		fmt.Fprintf(w, "     Threshold: %s\n", check.Threshold)
+		fmt.Fprintf(w, "       Details: %s\n", check.Description)
+	}
+	
+	fmt.Fprintf(w, "\n================================\n")
+
+	if len(report.Alerts) > 0 {
+		fmt.Fprintf(w, "STATUS: UNHEALTHY\n")
+		fmt.Fprintf(w, "One or more metrics exceeded acceptable thresholds.\n")
+	} else {
+		fmt.Fprintf(w, "STATUS: HEALTHY\n")
+		fmt.Fprintf(w, "All monitored metrics are within acceptable thresholds.\n")
+	}
+}
+
+func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.File) {
 	fmt.Println("\n=== etcdoc Diagnostic Report ===")
 	body, err := s.Scrape()
 	if err != nil {
@@ -276,22 +347,17 @@ func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator) {
 		os.Exit(1)
 	}
 
-	for _, check := range report.Checks {
-		fmt.Printf("\n[%s] %s\n", check.Status, check.Name)
-		fmt.Printf("       Current: %s\n", check.Current)
-		fmt.Printf("     Threshold: %s\n", check.Threshold)
-		fmt.Printf("       Details: %s\n", check.Description)
+	writeDiagnosticReport(os.Stdout, report)
+	// We no longer need to manually write to logFile here if we don't want to, 
+	// actually the requirements say the report should go to the file.
+	// But initLogger already wrapped logFile. However, this is raw fmt writing, not slog.
+	if logFile != nil {
+		writeDiagnosticReport(logFile, report)
+		logFile.Sync()
 	}
-	
-	fmt.Println("\n================================")
 
 	if len(report.Alerts) > 0 {
-		fmt.Println("STATUS: UNHEALTHY")
-		fmt.Println("One or more metrics exceeded acceptable thresholds.")
 		os.Exit(1)
 	}
-
-	fmt.Println("STATUS: HEALTHY")
-	fmt.Println("All monitored metrics are within acceptable thresholds.")
 	os.Exit(0)
 }
