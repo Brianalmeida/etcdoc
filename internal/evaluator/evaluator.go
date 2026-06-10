@@ -141,22 +141,94 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 		}
 	}
 
-	// 4. DB Size Check
+	// 4. DB Size Check & Defrag Monitoring
+	var dbSize float64
 	if mf, ok := metricFamilies["etcd_mvcc_db_total_size_in_bytes"]; ok {
 		for _, m := range mf.GetMetric() {
-			val := m.GetGauge().GetValue()
+			dbSize = m.GetGauge().GetValue()
+			utilization := (dbSize / e.cfg.Thresholds.MaxDBSizeBytes) * 100
+			
 			res := CheckResult{
 				Name:      "Database Size",
-				Current:   fmt.Sprintf("%.2f MB", val/(1024*1024)),
+				Current:   fmt.Sprintf("%.2f MB (%.1f%%)", dbSize/(1024*1024), utilization),
 				Threshold: fmt.Sprintf("%.2f MB", e.cfg.Thresholds.MaxDBSizeBytes/(1024*1024)),
 			}
-			if val > e.cfg.Thresholds.MaxDBSizeBytes {
+			if dbSize > e.cfg.Thresholds.MaxDBSizeBytes {
 				res.Status = "FAIL"
 				res.Description = "Database size exceeds maximum threshold"
+				alerts = append(alerts, Alert{Metric: "etcd_mvcc_db_total_size_in_bytes", Message: res.Description})
+			} else if utilization >= 85.0 {
+				res.Status = "WARN"
+				res.Description = "Database size is nearing capacity limits"
 				alerts = append(alerts, Alert{Metric: "etcd_mvcc_db_total_size_in_bytes", Message: res.Description})
 			} else {
 				res.Status = "PASS"
 				res.Description = "Database size within bounds"
+			}
+			checks = append(checks, res)
+		}
+	}
+
+	if mf, ok := metricFamilies["etcd_disk_defrag_inflight"]; ok {
+		for _, m := range mf.GetMetric() {
+			val := m.GetGauge().GetValue()
+			res := CheckResult{
+				Name:      "Defragmentation Inflight",
+				Current:   fmt.Sprintf("%.0f", val),
+				Threshold: "0",
+			}
+			if val > 0 {
+				res.Status = "WARN"
+				res.Description = "An etcd defragmentation is currently running"
+				alerts = append(alerts, Alert{Metric: "etcd_disk_defrag_inflight", Message: res.Description})
+			} else {
+				res.Status = "PASS"
+				res.Description = "No defragmentation in progress"
+			}
+			checks = append(checks, res)
+		}
+	}
+
+	// Backend Commit Latency Check
+	if mf, ok := metricFamilies["etcd_disk_backend_commit_duration_seconds"]; ok {
+		for _, m := range mf.GetMetric() {
+			hist := m.GetHistogram()
+			if hist.GetSampleCount() > 0 {
+				avg := hist.GetSampleSum() / float64(hist.GetSampleCount())
+				res := CheckResult{
+					Name:      "Backend Commit Latency",
+					Current:   fmt.Sprintf("%.4fs", avg),
+					Threshold: fmt.Sprintf("%.4fs", e.cfg.Thresholds.BackendCommitLatencySeconds),
+				}
+				if avg > e.cfg.Thresholds.BackendCommitLatencySeconds {
+					res.Status = "FAIL"
+					res.Description = "High average backend commit latency"
+					alerts = append(alerts, Alert{Metric: "etcd_disk_backend_commit_duration_seconds", Message: res.Description})
+				} else {
+					res.Status = "PASS"
+					res.Description = "Backend commit latency within bounds"
+				}
+				checks = append(checks, res)
+			}
+		}
+	}
+
+	// Learner Node Check
+	if mf, ok := metricFamilies["etcd_server_is_learner"]; ok {
+		for _, m := range mf.GetMetric() {
+			val := m.GetGauge().GetValue()
+			res := CheckResult{
+				Name:      "Learner Node Status",
+				Current:   fmt.Sprintf("%.0f", val),
+				Threshold: "0",
+			}
+			if val == 1 {
+				res.Status = "WARN"
+				res.Description = "Node is stuck in learner state and failing to promote"
+				alerts = append(alerts, Alert{Metric: "etcd_server_is_learner", Message: res.Description})
+			} else {
+				res.Status = "PASS"
+				res.Description = "Node is not a learner"
 			}
 			checks = append(checks, res)
 		}
@@ -251,16 +323,16 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 		res := CheckResult{
 			Name:      "Cluster Size",
 			Current:   fmt.Sprintf("%.0f nodes", knownPeers),
-			Threshold: "Odd number (1, 3, or 5)",
+			Threshold: "Odd number (1, 3, 5, or 7)",
 		}
 
 		if int(knownPeers)%2 == 0 {
 			res.Status = "WARN"
 			res.Description = "Etcd requires an odd number of members for optimal fault tolerance."
 			alerts = append(alerts, Alert{Metric: "etcd_network_known_peers", Message: res.Description})
-		} else if knownPeers > 5 {
+		} else if knownPeers > 7 {
 			res.Status = "WARN"
-			res.Description = "Clusters larger than 5 nodes are generally not recommended due to performance degradation."
+			res.Description = "Clusters larger than 7 nodes are generally not recommended due to performance degradation."
 			alerts = append(alerts, Alert{Metric: "etcd_network_known_peers", Message: res.Description})
 		} else {
 			res.Status = "PASS"

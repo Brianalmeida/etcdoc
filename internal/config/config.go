@@ -25,8 +25,9 @@ type Config struct {
 	} `yaml:"thresholds"`
 
 	Logging struct {
-		Level  string `yaml:"level"`  // debug, info, warn, error
-		Format string `yaml:"format"` // json, text
+		Level              string `yaml:"level"`  // debug, info, warn, error
+		Format             string `yaml:"format"` // json, text
+		DiagnosticInterval string `yaml:"diagnostic_interval"`
 	} `yaml:"logging"`
 
 	Observability struct {
@@ -51,7 +52,8 @@ func Load(path string) (*Config, error) {
 	cfg.Thresholds.MaxDBSizeBytes = 8589934592 // 8GB default
 	cfg.Logging.Level = "info"
 	cfg.Logging.Format = "json"
-	
+	cfg.Logging.DiagnosticInterval = "6h"
+
 	cfg.Observability.Enabled = true
 	cfg.Observability.MetricsPort = 8080
 
@@ -93,6 +95,9 @@ func Load(path string) (*Config, error) {
 		if f, err := strconv.ParseFloat(v, 64); err == nil {
 			cfg.Thresholds.MaxDBSizeBytes = f
 		}
+	}
+	if v := os.Getenv("DIAGNOSTIC_INTERVAL"); v != "" {
+		cfg.Logging.DiagnosticInterval = v
 	}
 	return cfg, nil
 }

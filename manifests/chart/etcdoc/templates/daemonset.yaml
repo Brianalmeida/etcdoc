@@ -1,0 +1,67 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: etcdoc
+  namespace: {{ .Release.Namespace }}
+spec:
+  selector:
+    matchLabels:
+      app: etcdoc
+  template:
+    metadata:
+      labels:
+        app: etcdoc
+    spec:
+      hostNetwork: true
+      serviceAccountName: {{ .Values.serviceAccount.name }}
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      tolerations:
+      - key: "node-role.kubernetes.io/control-plane"
+        operator: "Exists"
+        effect: "NoSchedule"
+      - key: "node-role.kubernetes.io/master"
+        operator: "Exists"
+        effect: "NoSchedule"
+      containers:
+      - name: etcdoc
+        image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
+        imagePullPolicy: {{ .Values.image.pullPolicy }}
+        args: ["-config", "/etc/tool/config.yaml"]
+        ports:
+        - name: http
+          containerPort: {{ .Values.config.observability.metrics_port }}
+        env:
+        - name: POD_NAME
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        securityContext:
+          readOnlyRootFilesystem: true
+          runAsNonRoot: false
+          runAsUser: 0
+          allowPrivilegeEscalation: false
+          capabilities:
+            drop: ["ALL"]
+        volumeMounts:
+        - name: config
+          mountPath: /etc/tool
+          readOnly: true
+        - name: etcd-certs
+          mountPath: /etc/etcd
+          readOnly: true
+        - name: etcd-logs
+          mountPath: /var/lib/rancher/rke2/server/tls/etcd/
+          readOnly: false
+      volumes:
+      - name: config
+        configMap:
+          name: etcdoc-config
+      - name: etcd-certs
+        hostPath:
+          path: /var/lib/rancher/rke2/server/tls/etcd/
+          type: Directory
+      - name: etcd-logs
+        hostPath:
+          path: /var/lib/rancher/rke2/server/tls/etcd/
+          type: Directory
