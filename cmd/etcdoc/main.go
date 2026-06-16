@@ -347,17 +347,22 @@ func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.F
 		os.Exit(1)
 	}
 
-	writeDiagnosticReport(os.Stdout, report)
-	// We no longer need to manually write to logFile here if we don't want to, 
-	// actually the requirements say the report should go to the file.
-	// But initLogger already wrapped logFile. However, this is raw fmt writing, not slog.
-	if logFile != nil {
-		writeDiagnosticReport(logFile, report)
-		logFile.Sync()
+	for _, check := range report.Checks {
+		fmt.Printf("\n[%s] %s\n", check.Status, check.Name)
+		fmt.Printf("       Current: %s\n", check.Current)
+		fmt.Printf("     Threshold: %s\n", check.Threshold)
+		fmt.Printf("       Details: %s\n", check.Description)
 	}
 
+	fmt.Println("\n================================")
+
 	if len(report.Alerts) > 0 {
+		fmt.Println("STATUS: UNHEALTHY")
+		fmt.Println("One or more metrics exceeded acceptable thresholds.")
 		os.Exit(1)
 	}
+
+	fmt.Println("STATUS: HEALTHY")
+	fmt.Println("All monitored metrics are within acceptable thresholds.")
 	os.Exit(0)
 }
