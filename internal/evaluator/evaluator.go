@@ -76,6 +76,54 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 	if mf, ok := metricFamilies["etcd_server_has_leader"]; ok {
 		for _, m := range mf.GetMetric() {
 			val := m.GetGauge().GetValue()
+			
+			isLeaderStr := ""
+			isLeader := false
+			
+			// Check if this specific node is the leader
+			if mfIsLeader, okIsLeader := metricFamilies["etcd_server_is_leader"]; okIsLeader {
+				for _, mIsLeader := range mfIsLeader.GetMetric() {
+					if mIsLeader.GetGauge().GetValue() == 1 {
+						isLeader = true
+					}
+				}
+			}
+
+			// Attempt to identify the actual leader ID
+			leaderID := "unknown"
+			if isLeader {
+				// We are the leader, so get our own ID
+				if mfServerID, okServerID := metricFamilies["etcd_server_id"]; okServerID {
+					for _, mServerID := range mfServerID.GetMetric() {
+						for _, label := range mServerID.GetLabel() {
+							if label.GetName() == "server_id" {
+								leaderID = label.GetValue()
+							}
+						}
+					}
+				}
+				isLeaderStr = fmt.Sprintf(" (This node is the leader: %s)", leaderID)
+			} else {
+				// We are a follower, the leader is the one sending us raft data
+				if mfRecv, okRecv := metricFamilies["etcd_network_peer_received_bytes_total"]; okRecv {
+					var maxBytes float64
+					for _, mRecv := range mfRecv.GetMetric() {
+						bytes := mRecv.GetCounter().GetValue()
+						for _, label := range mRecv.GetLabel() {
+							if label.GetName() == "From" {
+								fromID := label.GetValue()
+								// The leader is the node we receive the most bytes from (and isn't '0' which indicates no real peer)
+								if fromID != "0" && bytes > maxBytes {
+									maxBytes = bytes
+									leaderID = fromID
+								}
+							}
+						}
+					}
+				}
+				isLeaderStr = fmt.Sprintf(" (Follower. Leader is: %s)", leaderID)
+			}
+
 			res := CheckResult{
 				Name:      "Leader Status",
 				Current:   fmt.Sprintf("%.0f", val),
@@ -87,7 +135,7 @@ func (e *Evaluator) Evaluate(metricsBody string) (Report, error) {
 				alerts = append(alerts, Alert{Metric: "etcd_server_has_leader", Message: res.Description})
 			} else {
 				res.Status = "PASS"
-				res.Description = "Member has an active leader"
+				res.Description = "Member has an active leader" + isLeaderStr
 			}
 			checks = append(checks, res)
 		}
