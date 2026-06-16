@@ -186,7 +186,7 @@ func main() {
 					if identity == podName {
 						slog.Info("I am the new leader", "identity", identity)
 					} else {
-						slog.Info("New leader elected", "identity", identity)
+						slog.Info("New etcdoc pod leader elected", "identity", identity)
 					}
 				},
 			},

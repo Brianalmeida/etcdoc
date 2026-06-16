@@ -4,6 +4,11 @@ All notable changes to this project will be documented in this file.
 
 ## Git History
 
+- **2026-06-16**: Deployed etcdoc with Helm and resolved RBAC lease bugs by moving to kube-system.
+- **2026-06-16**: Added longevity-test.sh to continuously monitor pod health and metric availability.
+- **2026-06-16**: Reverted CLI diagnostic formatting to use explicit standard output, fixing double-header bugs.
+- **2026-06-16**: Improved leader detection to output actual hexadecimal member IDs (using etcd_server_id and network peer byte tracking).
+- **2026-06-16**: Updated main.go to clarify "New etcdoc pod leader elected" in structured logs.
 - **2026-06-10**: Addressing git conflicts (34b08bd)
 - **2026-06-10**: Merge pull request #7 from Brianalmeida/v3-roadmap (6cde8d1)
 - **2026-06-10**: Resolving conflicts (2415ffa)
