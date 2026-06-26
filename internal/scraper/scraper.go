@@ -24,7 +24,7 @@ func New(cfg *config.Config) (*Scraper, error) {
 
 	if strings.HasPrefix(cfg.Etcd.MetricsURL, "https://") {
 		slog.Debug("Initializing HTTPS scraper", "url", cfg.Etcd.MetricsURL, "cert", cfg.Etcd.CertFile)
-		
+
 		// Load client cert
 		cert, err := tls.LoadX509KeyPair(cfg.Etcd.CertFile, cfg.Etcd.KeyFile)
 		if err != nil {
@@ -62,23 +62,18 @@ func New(cfg *config.Config) (*Scraper, error) {
 	}, nil
 }
 
-func (s *Scraper) Scrape() (string, error) {
+func (s *Scraper) Scrape() (io.ReadCloser, error) {
 	slog.Debug("Scraping etcd metrics", "url", s.url)
-	
+
 	resp, err := s.client.Get(s.url)
 	if err != nil {
-		return "", fmt.Errorf("failed to GET metrics from %s: %w", s.url, err)
+		return nil, fmt.Errorf("failed to GET metrics from %s: %w", s.url, err)
 	}
-	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("received unexpected status code from %s: %d", s.url, resp.StatusCode)
+		resp.Body.Close()
+		return nil, fmt.Errorf("received unexpected status code from %s: %d", s.url, resp.StatusCode)
 	}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body from %s: %w", s.url, err)
-	}
-
-	return string(body), nil
+	return resp.Body, nil
 }

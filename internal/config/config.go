@@ -44,7 +44,7 @@ func Load(path string) (*Config, error) {
 	cfg.Etcd.CertFile = "/var/lib/rancher/rke2/server/tls/etcd/server-client.crt"
 	cfg.Etcd.KeyFile = "/var/lib/rancher/rke2/server/tls/etcd/server-client.key"
 	cfg.Etcd.CAFile = "/var/lib/rancher/rke2/server/tls/etcd/server-ca.crt"
-	
+
 	cfg.Thresholds.FsyncLatencySeconds = 0.5
 	cfg.Thresholds.BackendCommitLatencySeconds = 1.0
 	cfg.Thresholds.MaxLeaderChanges5m = 3

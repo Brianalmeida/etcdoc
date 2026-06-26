@@ -41,6 +41,7 @@ func buildConfig() (*rest.Config, error) {
 	}
 	return rest.InClusterConfig()
 }
+
 var (
 	scrapeErrorsTotal = promauto.NewCounter(prometheus.CounterOpts{
 		Name: "etcd_reliability_scrape_errors_total",
@@ -62,16 +63,7 @@ var (
 
 func initLogger(cfg *config.Config, logFile *os.File) {
 	var level slog.Level
-	switch cfg.Logging.Level {
-	case "debug":
-		level = slog.LevelDebug
-	case "info":
-		level = slog.LevelInfo
-	case "warn":
-		level = slog.LevelWarn
-	case "error":
-		level = slog.LevelError
-	default:
+	if err := level.UnmarshalText([]byte(cfg.Logging.Level)); err != nil {
 		level = slog.LevelInfo
 	}
 
@@ -128,16 +120,8 @@ func main() {
 	}
 
 	// Set up context and interrupts
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
-
-	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
-	go func() {
-		<-sigCh
-		slog.Info("Received termination signal, shutting down")
-		cancel()
-	}()
 
 	// Set up leader election
 	podName := os.Getenv("POD_NAME")
@@ -197,16 +181,16 @@ func main() {
 	go func() {
 		addr := fmt.Sprintf(":%d", cfg.Observability.MetricsPort)
 		slog.Info("Starting HTTP server", "addr", addr)
-		
+
 		mux := http.NewServeMux()
-		
+
 		// Always expose /health
 		mux.HandleFunc("/health", func(w http.ResponseWriter, r *http.Request) {
 			state := e.GetLastState()
 			w.Header().Set("Content-Type", "application/json")
 			json.NewEncoder(w).Encode(state)
 		})
-		
+
 		// Conditionally expose /metrics
 		if cfg.Observability.Enabled {
 			slog.Info("Prometheus metrics enabled at /metrics")
@@ -250,6 +234,7 @@ func main() {
 		} else {
 			slog.Error("Failed to evaluate metrics for startup report", "error", err)
 		}
+		body.Close()
 	} else {
 		slog.Error("Failed to scrape metrics for startup report", "error", err)
 	}
@@ -275,6 +260,7 @@ func main() {
 						logFile.Sync()
 					}
 				}
+				body.Close()
 			}
 		}
 	}
@@ -287,6 +273,7 @@ func run(s *scraper.Scraper, e *evaluator.Evaluator, n *notifier.Notifier) {
 		scrapeErrorsTotal.Inc()
 		return
 	}
+	defer body.Close()
 
 	report, err := e.Evaluate(body)
 	if err != nil {
@@ -321,7 +308,7 @@ func writeDiagnosticReport(w io.Writer, report evaluator.Report) {
 		fmt.Fprintf(w, "     Threshold: %s\n", check.Threshold)
 		fmt.Fprintf(w, "       Details: %s\n", check.Description)
 	}
-	
+
 	fmt.Fprintf(w, "\n================================\n")
 
 	if len(report.Alerts) > 0 {
@@ -334,12 +321,12 @@ func writeDiagnosticReport(w io.Writer, report evaluator.Report) {
 }
 
 func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.File) {
-	fmt.Println("\n=== etcdoc Diagnostic Report ===")
 	body, err := s.Scrape()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "FAIL: Could not scrape etcd metrics: %v\n", err)
 		os.Exit(1)
 	}
+	defer body.Close()
 
 	report, err := e.Evaluate(body)
 	if err != nil {
@@ -347,22 +334,10 @@ func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.F
 		os.Exit(1)
 	}
 
-	for _, check := range report.Checks {
-		fmt.Printf("\n[%s] %s\n", check.Status, check.Name)
-		fmt.Printf("       Current: %s\n", check.Current)
-		fmt.Printf("     Threshold: %s\n", check.Threshold)
-		fmt.Printf("       Details: %s\n", check.Description)
-	}
-
-	fmt.Println("\n================================")
+	writeDiagnosticReport(os.Stdout, report)
 
 	if len(report.Alerts) > 0 {
-		fmt.Println("STATUS: UNHEALTHY")
-		fmt.Println("One or more metrics exceeded acceptable thresholds.")
 		os.Exit(1)
 	}
-
-	fmt.Println("STATUS: HEALTHY")
-	fmt.Println("All monitored metrics are within acceptable thresholds.")
 	os.Exit(0)
 }

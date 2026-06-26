@@ -1,5 +1,5 @@
 image:
-  repository: ttl.sh/etcdoc-testing-brian-v3
+  repository: ttl.sh/etcdoc-testing-brian-v5
   tag: 4h
   pullPolicy: Always
 
@@ -31,4 +31,4 @@ rbac:
   create: true
 
 serviceMonitor:
-  enabled: true
+  enabled: false

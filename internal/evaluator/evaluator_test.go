@@ -1,6 +1,7 @@
 package evaluator
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/brian/etcdoc/internal/config"
@@ -77,7 +78,7 @@ func TestEvaluator(t *testing.T) {
 	e := New(cfg)
 
 	// Test 1: Healthy
-	report, err := e.Evaluate(healthyPayload)
+	report, err := e.Evaluate(strings.NewReader(healthyPayload))
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
@@ -94,7 +95,7 @@ func TestEvaluator(t *testing.T) {
 # TYPE etcd_server_leader_changes_seen_total counter
 etcd_server_leader_changes_seen_total 5
 `
-	report2, _ := e.Evaluate(statefulPayload)
+	report2, _ := e.Evaluate(strings.NewReader(statefulPayload))
 	hasLeaderAlert := false
 	for _, a := range report2.Alerts {
 		if a.Metric == "etcd_server_leader_changes_seen_total" {
@@ -108,11 +109,11 @@ etcd_server_leader_changes_seen_total 5
 
 	// Test 3: Unhealthy
 	e = New(cfg) // reset state
-	report3, err := e.Evaluate(unhealthyPayload)
+	report3, err := e.Evaluate(strings.NewReader(unhealthyPayload))
 	if err != nil {
 		t.Fatalf("Expected no error, got %v", err)
 	}
-	
+
 	expectedAlertCount := 8 // Leader, Fsync, Pending, DB Size, Defrag, Backend Commit, Learner, Peer Health
 	if len(report3.Alerts) != expectedAlertCount {
 		t.Errorf("Expected %d alerts, got %d", expectedAlertCount, len(report3.Alerts))
@@ -129,7 +130,7 @@ etcd_network_known_peers{peer="4"} 1
 etcd_network_known_peers{peer="5"} 1
 `
 	e = New(cfg) // reset state
-	report4, _ := e.Evaluate(fiveMemberPayload)
+	report4, _ := e.Evaluate(strings.NewReader(fiveMemberPayload))
 	if len(report4.Alerts) > 0 {
 		t.Errorf("Expected 0 alerts for 5-member cluster, got %d", len(report4.Alerts))
 		for _, a := range report4.Alerts {
@@ -145,7 +146,7 @@ etcd_network_known_peers{peer="6"} 1
 etcd_network_known_peers{peer="7"} 1
 `
 	e = New(cfg) // reset state
-	report5, _ := e.Evaluate(sevenMemberPayload)
+	report5, _ := e.Evaluate(strings.NewReader(sevenMemberPayload))
 	if len(report5.Alerts) > 0 {
 		t.Errorf("Expected 0 alerts for 7-member cluster, got %d", len(report5.Alerts))
 		for _, a := range report5.Alerts {
@@ -153,4 +154,3 @@ etcd_network_known_peers{peer="7"} 1
 		}
 	}
 }
-
