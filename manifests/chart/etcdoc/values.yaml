@@ -1,5 +1,5 @@
 image:
-  repository: ttl.sh/etcdoc-testing-brian-v5
+  repository: ttl.sh/etcdoc-testing-brian-v6
   tag: 4h
   pullPolicy: Always
 
