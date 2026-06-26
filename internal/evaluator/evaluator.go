@@ -3,6 +3,8 @@ package evaluator
 import (
 	"fmt"
 	"io"
+	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -90,6 +92,8 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 
 			// Attempt to identify the actual leader ID
 			leaderID := "unknown"
+			var peers []string
+
 			if isLeader {
 				// We are the leader, so get our own ID
 				if mfServerID, okServerID := metricFamilies["etcd_server_id"]; okServerID {
@@ -97,6 +101,22 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 						for _, label := range mServerID.GetLabel() {
 							if label.GetName() == "server_id" {
 								leaderID = label.GetValue()
+							}
+						}
+					}
+				}
+
+				// ponytail: extract followers from sent bytes
+				if mfSent, okSent := metricFamilies["etcd_network_peer_sent_bytes_total"]; okSent {
+					seen := make(map[string]bool)
+					for _, mSent := range mfSent.GetMetric() {
+						for _, label := range mSent.GetLabel() {
+							if label.GetName() == "To" {
+								id := label.GetValue()
+								if id != "0" && id != leaderID && !seen[id] {
+									seen[id] = true
+									peers = append(peers, id)
+								}
 							}
 						}
 					}
@@ -119,8 +139,26 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 							}
 						}
 					}
+					// Identify other peers
+					seen := make(map[string]bool)
+					for _, mRecv := range mfRecv.GetMetric() {
+						for _, label := range mRecv.GetLabel() {
+							if label.GetName() == "From" {
+								id := label.GetValue()
+								if id != "0" && id != leaderID && !seen[id] {
+									seen[id] = true
+									peers = append(peers, id)
+								}
+							}
+						}
+					}
 				}
 				isLeaderStr = fmt.Sprintf(" (Follower. Leader is: %s)", leaderID)
+			}
+
+			if len(peers) > 0 {
+				sort.Strings(peers)
+				isLeaderStr += fmt.Sprintf(". Peers: %s", strings.Join(peers, ", "))
 			}
 
 			res := CheckResult{

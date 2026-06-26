@@ -4,6 +4,8 @@ All notable changes to this project will be documented in this file.
 
 ## Git History
 
+- **2026-06-26**: Refactored evaluator_test.go to use table-driven tests and added follower ID extraction from network metrics.
+
 - **2026-06-23**: Fixed RBAC leader election permissions to explicitly use the kube-system namespace (6d53b01)
 - **2026-06-16**: Deployed etcdoc with Helm and resolved RBAC lease bugs by moving to kube-system.
 - **2026-06-16**: Added longevity-test.sh to continuously monitor pod health and metric availability.
