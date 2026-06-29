@@ -144,11 +144,11 @@ func TestEvaluator(t *testing.T) {
 			expectedAlerts: 8,
 		},
 		{
-			name:              "Stateful Leader Changes Detected",
-			payload:           "# TYPE etcd_server_has_leader gauge\netcd_server_has_leader 1\n# TYPE etcd_server_leader_changes_seen_total counter\netcd_server_leader_changes_seen_total 5\n",
-			preCheckTime:      time.Now(),
-			preLeaderChanges:  1, // 5 - 1 = 4 changes, which is > threshold of 3
-			expectedAlerts:    1,
+			name:             "Stateful Leader Changes Detected",
+			payload:          "# TYPE etcd_server_has_leader gauge\netcd_server_has_leader 1\n# TYPE etcd_server_leader_changes_seen_total counter\netcd_server_leader_changes_seen_total 5\n",
+			preCheckTime:     time.Now(),
+			preLeaderChanges: 1, // 5 - 1 = 4 changes, which is > threshold of 3
+			expectedAlerts:   1,
 		},
 	}
 

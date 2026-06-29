@@ -4,6 +4,9 @@ All notable changes to this project will be documented in this file.
 
 ## Git History
 
+- **2026-06-29**: Integrated native Kubernetes Events via `client-go/tools/record` for alerts and heartbeat monitoring in Rancher UI.
+- **2026-06-29**: Implemented native `logrotate` via Helm DaemonSet initContainer, mapping hostPath `/etc/logrotate.d/etcdoc` to cap log sizes and preserve disk space.
+- **2026-06-29**: Added Kubernetes RBAC permissions to create and patch `events`.
 - **2026-06-26**: Refactored evaluator_test.go to use table-driven tests and added follower ID extraction from network metrics.
 
 - **2026-06-23**: Fixed RBAC leader election permissions to explicitly use the kube-system namespace (6d53b01)

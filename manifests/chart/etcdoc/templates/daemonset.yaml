@@ -23,6 +23,27 @@ spec:
       - key: "node-role.kubernetes.io/master"
         operator: "Exists"
         effect: "NoSchedule"
+      initContainers:
+      - name: install-logrotate
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /host/etc/logrotate.d
+          cat <<EOF > /host/etc/logrotate.d/etcdoc
+          /var/lib/rancher/rke2/server/tls/etcd/etcdoc-diag.log {
+              size 50M
+              rotate 5
+              compress
+              missingok
+              notifempty
+              copytruncate
+          }
+          EOF
+        volumeMounts:
+        - name: logrotate-conf
+          mountPath: /host/etc/logrotate.d
       containers:
       - name: etcdoc
         image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
@@ -64,4 +85,8 @@ spec:
       - name: etcd-logs
         hostPath:
           path: /var/lib/rancher/rke2/server/tls/etcd/
-          type: Directory
+          type: DirectoryOrCreate
+      - name: logrotate-conf
+        hostPath:
+          path: /etc/logrotate.d/
+          type: DirectoryOrCreate

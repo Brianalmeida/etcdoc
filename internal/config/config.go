@@ -71,33 +71,30 @@ func Load(path string) (*Config, error) {
 	}
 
 	// Override thresholds with environment variables
-	if v := os.Getenv("FSYNC_LATENCY_SECONDS"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Thresholds.FsyncLatencySeconds = f
-		}
-	}
-	if v := os.Getenv("BACKEND_COMMIT_LATENCY_SECONDS"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Thresholds.BackendCommitLatencySeconds = f
-		}
-	}
-	if v := os.Getenv("MAX_LEADER_CHANGES_5M"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Thresholds.MaxLeaderChanges5m = i
-		}
-	}
-	if v := os.Getenv("MAX_PENDING_PROPOSALS"); v != "" {
-		if i, err := strconv.Atoi(v); err == nil {
-			cfg.Thresholds.MaxPendingProposals = i
-		}
-	}
-	if v := os.Getenv("MAX_DB_SIZE_BYTES"); v != "" {
-		if f, err := strconv.ParseFloat(v, 64); err == nil {
-			cfg.Thresholds.MaxDBSizeBytes = f
-		}
-	}
+	parseFloatEnv("FSYNC_LATENCY_SECONDS", &cfg.Thresholds.FsyncLatencySeconds)
+	parseFloatEnv("BACKEND_COMMIT_LATENCY_SECONDS", &cfg.Thresholds.BackendCommitLatencySeconds)
+	parseFloatEnv("MAX_DB_SIZE_BYTES", &cfg.Thresholds.MaxDBSizeBytes)
+	parseIntEnv("MAX_LEADER_CHANGES_5M", &cfg.Thresholds.MaxLeaderChanges5m)
+	parseIntEnv("MAX_PENDING_PROPOSALS", &cfg.Thresholds.MaxPendingProposals)
+
 	if v := os.Getenv("DIAGNOSTIC_INTERVAL"); v != "" {
 		cfg.Logging.DiagnosticInterval = v
 	}
 	return cfg, nil
+}
+
+func parseFloatEnv(key string, target *float64) {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			*target = f
+		}
+	}
+}
+
+func parseIntEnv(key string, target *int) {
+	if v := os.Getenv(key); v != "" {
+		if i, err := strconv.Atoi(v); err == nil {
+			*target = i
+		}
+	}
 }

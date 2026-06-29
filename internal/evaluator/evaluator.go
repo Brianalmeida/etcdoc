@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/brian/etcdoc/internal/config"
+	dto "github.com/prometheus/client_model/go"
 	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 )
@@ -108,18 +109,7 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 
 				// ponytail: extract followers from sent bytes
 				if mfSent, okSent := metricFamilies["etcd_network_peer_sent_bytes_total"]; okSent {
-					seen := make(map[string]bool)
-					for _, mSent := range mfSent.GetMetric() {
-						for _, label := range mSent.GetLabel() {
-							if label.GetName() == "To" {
-								id := label.GetValue()
-								if id != "0" && id != leaderID && !seen[id] {
-									seen[id] = true
-									peers = append(peers, id)
-								}
-							}
-						}
-					}
+					peers = append(peers, parsePeers(mfSent.GetMetric(), "To", leaderID)...)
 				}
 				isLeaderStr = fmt.Sprintf(" (This node is the leader: %s)", leaderID)
 			} else {
@@ -140,18 +130,7 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 						}
 					}
 					// Identify other peers
-					seen := make(map[string]bool)
-					for _, mRecv := range mfRecv.GetMetric() {
-						for _, label := range mRecv.GetLabel() {
-							if label.GetName() == "From" {
-								id := label.GetValue()
-								if id != "0" && id != leaderID && !seen[id] {
-									seen[id] = true
-									peers = append(peers, id)
-								}
-							}
-						}
-					}
+					peers = append(peers, parsePeers(mfRecv.GetMetric(), "From", leaderID)...)
 				}
 				isLeaderStr = fmt.Sprintf(" (Follower. Leader is: %s)", leaderID)
 			}
@@ -434,4 +413,21 @@ func (e *Evaluator) Evaluate(reader io.Reader) (Report, error) {
 	e.mu.Unlock()
 
 	return Report{Alerts: alerts, Checks: checks}, nil
+}
+
+func parsePeers(metrics []*dto.Metric, labelName, excludeID string) []string {
+	seen := make(map[string]bool)
+	var peers []string
+	for _, m := range metrics {
+		for _, label := range m.GetLabel() {
+			if label.GetName() == labelName {
+				id := label.GetValue()
+				if id != "0" && id != excludeID && !seen[id] {
+					seen[id] = true
+					peers = append(peers, id)
+				}
+			}
+		}
+	}
+	return peers
 }

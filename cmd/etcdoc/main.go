@@ -22,12 +22,16 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
+	"k8s.io/client-go/kubernetes/scheme"
+	typedcorev1 "k8s.io/client-go/kubernetes/typed/core/v1"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
 	"k8s.io/client-go/tools/leaderelection"
 	"k8s.io/client-go/tools/leaderelection/resourcelock"
+	"k8s.io/client-go/tools/record"
 )
 
 var (
@@ -112,7 +116,6 @@ func main() {
 	}
 
 	e := evaluator.New(cfg)
-	n := notifier.New(cfg)
 
 	if *once {
 		runDiagnosticMode(s, e, logFile)
@@ -123,10 +126,15 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
-	// Set up leader election
+	// Set up leader election and event recording
+	var recorder record.EventRecorder
 	podName := os.Getenv("POD_NAME")
 	if podName == "" {
 		podName = "etcdoc-standalone"
+	}
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "kube-system"
 	}
 
 	kubeCfg, err := buildConfig()
@@ -140,10 +148,14 @@ func main() {
 			os.Exit(1)
 		}
 
+		broadcaster := record.NewBroadcaster()
+		broadcaster.StartRecordingToSink(&typedcorev1.EventSinkImpl{Interface: clientset.CoreV1().Events(namespace)})
+		recorder = broadcaster.NewRecorder(scheme.Scheme, corev1.EventSource{Component: "etcdoc"})
+
 		lock := &resourcelock.LeaseLock{
 			LeaseMeta: metav1.ObjectMeta{
 				Name:      "etcdoc-leader",
-				Namespace: "kube-system",
+				Namespace: namespace,
 			},
 			Client: clientset.CoordinationV1(),
 			LockConfig: resourcelock.ResourceLockConfig{
@@ -222,24 +234,16 @@ func main() {
 	defer diagTicker.Stop()
 
 	// Startup Diagnostic Report
-	body, err := s.Scrape()
-	if err == nil {
-		report, err := e.Evaluate(body)
-		if err == nil {
-			slog.Info("Startup Diagnostic Report", "checks", report.Checks)
-			if logFile != nil {
-				writeDiagnosticReport(logFile, report)
-				logFile.Sync()
-			}
-		} else {
-			slog.Error("Failed to evaluate metrics for startup report", "error", err)
-		}
-		body.Close()
-	} else {
-		slog.Error("Failed to scrape metrics for startup report", "error", err)
+	if _, err := generateDiagnosticReport(s, e, logFile, "Startup Diagnostic Report"); err != nil {
+		slog.Error("Failed to generate startup diagnostic report", "error", err)
 	}
 
+	n := notifier.New(cfg, recorder, podName, namespace)
+	heartbeatTicker := time.NewTicker(1 * time.Hour)
+	defer heartbeatTicker.Stop()
+
 	// Initial run
+	n.Heartbeat()
 	run(s, e, n)
 
 	for {
@@ -249,19 +253,12 @@ func main() {
 			return
 		case <-ticker.C:
 			run(s, e, n)
-		case <-diagTicker.C:
-			body, err := s.Scrape()
-			if err == nil {
-				report, err := e.Evaluate(body)
-				if err == nil {
-					slog.Info("Periodic Diagnostic Report generated")
-					if logFile != nil {
-						writeDiagnosticReport(logFile, report)
-						logFile.Sync()
-					}
-				}
-				body.Close()
+		case <-heartbeatTicker.C:
+			if atomic.LoadInt32(&isLeader) == 1 {
+				n.Heartbeat()
 			}
+		case <-diagTicker.C:
+			generateDiagnosticReport(s, e, logFile, "Periodic Diagnostic Report generated")
 		}
 	}
 }
@@ -321,23 +318,39 @@ func writeDiagnosticReport(w io.Writer, report evaluator.Report) {
 }
 
 func runDiagnosticMode(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.File) {
-	body, err := s.Scrape()
+	report, err := generateDiagnosticReport(s, e, nil, "")
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: Could not scrape etcd metrics: %v\n", err)
-		os.Exit(1)
-	}
-	defer body.Close()
-
-	report, err := e.Evaluate(body)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "FAIL: Evaluation error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "FAIL: %v\n", err)
 		os.Exit(1)
 	}
 
-	writeDiagnosticReport(os.Stdout, report)
+	writeDiagnosticReport(os.Stdout, *report)
 
 	if len(report.Alerts) > 0 {
 		os.Exit(1)
 	}
 	os.Exit(0)
+}
+
+func generateDiagnosticReport(s *scraper.Scraper, e *evaluator.Evaluator, logFile *os.File, title string) (*evaluator.Report, error) {
+	body, err := s.Scrape()
+	if err != nil {
+		return nil, fmt.Errorf("scrape failed: %w", err)
+	}
+	defer body.Close()
+
+	report, err := e.Evaluate(body)
+	if err != nil {
+		return nil, fmt.Errorf("evaluate failed: %w", err)
+	}
+
+	if title != "" {
+		slog.Info(title, "checks", report.Checks)
+	}
+	if logFile != nil {
+		writeDiagnosticReport(logFile, report)
+		logFile.Sync()
+	}
+
+	return &report, nil
 }
